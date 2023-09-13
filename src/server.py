@@ -10,7 +10,7 @@ from datetime import datetime
 parser = argparse.ArgumentParser()
 
 parser.add_argument('--port',                help="Set listening port",                default=8888,                        type=int)
-parser.add_argument('--max_conn',            help="Maximum allowed connections",       default=5,                           type=int)
+parser.add_argument('--max_conn',            help="Maximum allowed connections",       default=50,                          type=int)
 parser.add_argument('--buffer_size',         help="Socket read buffer size",           default=8192,                        type=int)
 
 args           = parser.parse_args()
@@ -19,7 +19,12 @@ terminateAll   = False
 # --------------------------------------------------------------------------------------
 
 def printStr (s, prefix=""):
-    s = re.sub(r'(Authorization:\s\w*\s)(.*)', r'\1***REDACTED***', s, re.MULTILINE, re.IGNORECASE)
+    try:
+        s = s if isinstance(s, bytes) else str(s)
+        s = str(s, encoding='utf-8', errors='ignore') if not isinstance(s, str) else s
+        s = re.sub(r'(Authorization:\s\w*\s)(.*)', r'\1***REDACTED***', s, re.MULTILINE, re.IGNORECASE)
+    except Exception as err:
+        pass
     print (f"{datetime.now().strftime('%m/%d/%Y, %H:%M:%S')} {prefix}::{s}")
 
 # --------------------------------------------------------------------------------------
@@ -125,9 +130,6 @@ def conn_string (conn_src, addr_src):
         printStr (f"Exception: {str(err)}", prefix="ERROR")
         printStr (traceback.format_exc(),   prefix="ERROR")
 
-
-
-
 def proxy_server (webserver, port, conn_src, addr_src, data, http_connect_relay):
     try:
         # printStr(data)
@@ -135,12 +137,12 @@ def proxy_server (webserver, port, conn_src, addr_src, data, http_connect_relay)
         conn_dest = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         conn_dest.connect((webserver, port))
     except Exception as err:
-        if conn_dest:
+        try:
             conn_dest.close()
-
-        if conn_src:
+        except: pass
+        try:
             conn_src.close()
-
+        except: pass
         printStr(f"proxy_server(destination connect) Exception: {str(err)}", prefix="ERROR")
         printStr(traceback.format_exc(), prefix="ERROR")
         return
@@ -174,7 +176,7 @@ def proxy_server (webserver, port, conn_src, addr_src, data, http_connect_relay)
                 inputsReady, outputsReady, errorsReady = select.select(inputs, outputs, [], 1.0)
             except Exception as e:
                 printStr("Exception : proxy_server[1] terminating with:", prefix="ERROR")
-                printStr(e, prefix="ERROR")
+                printStr(str(e), prefix="ERROR")
                 break
 
             for inp in inputsReady:
@@ -183,7 +185,7 @@ def proxy_server (webserver, port, conn_src, addr_src, data, http_connect_relay)
                         data = conn_src.recv(args.buffer_size)
                     except Exception as e:
                         printStr("Exception : proxy_server[conn_src.recv] terminating with:", prefix="ERROR")
-                        printStr(e, prefix="ERROR")
+                        printStr(str(e), prefix="ERROR")
 
                     if data != None:
                         if len(data) > 0:
@@ -195,7 +197,7 @@ def proxy_server (webserver, port, conn_src, addr_src, data, http_connect_relay)
                         data = conn_dest.recv(args.buffer_size)
                     except Exception as e:
                         printStr("Exception : proxy_server[conn_dest.recv] terminating with:", prefix="ERROR")
-                        printStr(e, prefix="ERROR")
+                        printStr(str(e), prefix="ERROR")
                         terminate = True
                         break
 
