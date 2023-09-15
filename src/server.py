@@ -4,17 +4,22 @@ import select
 import sys
 import re
 import traceback
+import base64
 from _thread import *
 from datetime import datetime
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument('--port',                help="Set listening port",                default=8888,                        type=int)
-parser.add_argument('--max_conn',            help="Maximum allowed connections",       default=50,                          type=int)
-parser.add_argument('--buffer_size',         help="Socket read buffer size",           default=8192,                        type=int)
+parser.add_argument('--port',                     help="Set listening port",                default=8888,                        type=int)
+parser.add_argument('--max_conn',                 help="Maximum allowed connections",       default=50,                          type=int)
+parser.add_argument('--buffer_size',              help="Socket read buffer size",           default=8192,                        type=int)
+parser.add_argument('--debug',                    help="turn on debug information",         action="store_true")
+parser.add_argument('--proxy_authorization_file', help="Proxy user BASIC authorization file in format of username:password per line",
+                                                                                            default="",                          type=str)
 
 args           = parser.parse_args()
 terminateAll   = False
+proxyAuthList  = []
 
 # --------------------------------------------------------------------------------------
 
@@ -22,14 +27,32 @@ def printStr (s, prefix=""):
     try:
         s = s if isinstance(s, bytes) else str(s)
         s = str(s, encoding='utf-8', errors='ignore') if not isinstance(s, str) else s
-        s = re.sub(r'(Authorization:\s\w*\s)(.*)', r'\1***REDACTED***', s, re.MULTILINE, re.IGNORECASE)
+        print(f"{datetime.now().strftime('%m/%d/%Y, %H:%M:%S')} {prefix}::{s}")
     except Exception as err:
         pass
-    print (f"{datetime.now().strftime('%m/%d/%Y, %H:%M:%S')} {prefix}::{s}")
 
 # --------------------------------------------------------------------------------------
 
 def start():    #Main Program
+    authCfgLineNo = 0
+    try:
+        # if authorisation file defined, then load it to handle authorised proxies only
+        if args.proxy_authorization_file != "":
+            f = open(args.proxy_authorization_file, "r")
+            for line in f.readlines():
+                authCfgLineNo += 1
+                line = line.strip()
+                if (line == "" or line[0] == '#'):
+                    continue
+                a = line.split(':', 1)
+                if len(a) < 2:
+                    printStr(f"Malformed entry in authorization file '{args.proxy_authorization_file}' @ line {authCfgLineNo+1}", prefix="ERROR")
+                    continue
+                proxyAuthList.append(line)
+    except:
+        printStr(f"Error reading authorization file '{args.proxy_authorization_file}' @ line {authCfgLineNo+1}", prefix="ERROR")
+        printStr("Continuing to boot the proxy server...")
+
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -64,28 +87,54 @@ def start():    #Main Program
 def conn_string (conn_src, addr_src):
     try:
         printStr (("="*4) + f" connected @ {str(conn_src.getsockname())} " + ("=" * 4))
-        data = conn_src.recv(args.buffer_size)  # Receive client data
+        data  = conn_src.recv(args.buffer_size)  # Receive client data
+        headerList = []
         try:
-            printStr ("Socket Request Data:\n" + ("~"*60) +"\n" + str(data, encoding='utf-8') + "\n" + "~"*60)
+            if args.debug:
+                printStr ("Socket Request Data:\n" + ("~"*60) +"\n" + str(data, encoding='utf-8') + "\n" + "~"*60)
 
             http_connect_relay = False
             connect_addrs = ''
             webserver_dst = ""
             port_dst      = -1
-            first_line    = str(data.split(b'\n')[0], encoding='utf-8', errors='ignore')
-            fl_cmd        = first_line.split(' ')
+
+            headerList = str(data.split(b'\r\n\r\n')[0], encoding='utf-8', errors='ignore').split('\r\n')
+            first_line = headerList[0]
+            fl_cmd     = first_line.split(' ')
         except:
             try:
                 conn_src.close()
             except: pass
             return
 
+        # extract any Proxy-Authorization from the header
+        authType  = None
+        authCreds = None
+        authenticated = False
+        for hdr in headerList:
+            item = hdr.split(':', 1)
+            if item[0] == 'Proxy-Authorization':
+                authType, authCreds = item[1].strip().split(' ')
+                if authCreds:
+                    authCreds = base64.b64decode(authCreds).decode('utf-8')
+
+        if proxyAuthList:
+            if authType and authCreds and authType == 'Basic' and (authCreds in proxyAuthList):
+                authenticated = True
+
+            if not authenticated:
+                connected = b'HTTP/1.1 407 Proxy-Authenticate\r\nProxy-Authenticate: Basic\r\n\r\n\r\n'
+                printStr("Proxy-Authenticate: requested to client, invalid password!")
+                conn_src.sendall(connected)
+                return
+            printStr ("Proxy-Authenticated on username : " + authCreds.split(':')[0])
+
         # Parse the proxy request
         # GET http://blah.blah.blah.com:5550/device_info/hello.pl HTTP/1.1
         # determine if this is an HTTPS request with this type of header:
         # CONNECT blah.blah.com:5543 HTTP/1.1
         #...
-        if fl_cmd[0].lower() == 'connect':
+        if fl_cmd[0] == 'Connect':
             http_connect_relay = True
             connect_addrs = fl_cmd[1]
             cnnt_parts    = connect_addrs.split(':')
@@ -116,7 +165,16 @@ def conn_string (conn_src, addr_src):
 
                 # remove the http(s)://blah.com/ url request from the data leaving only the path:
                 #e.g http(s)://blah.com/runthis.py  -->  /runthis.py
-                data = bytes(re.sub (r'(.*\s)(http(s|)://.*?)(/.*)', r"\1\4", str(data, encoding="utf-8")), 'utf-8')
+                dataSplit = data.decode('cp437').split('\r\n\r\n', 1)
+                dataHdr   = bytes(dataSplit[0], 'cp437').decode('utf-8')
+                if authenticated:
+                    dataHdr = re.sub(r'(Proxy-Authorization:.*?\r\n)', r"",  dataHdr, re.MULTILINE)
+
+                dataHdr = re.sub(r'(.*\s)(http(s|)://.*?)(/.*)', r"\1\4", dataHdr)
+                data = bytes(dataHdr + '\r\n\r\n' + (dataSplit[1] if len(dataSplit) > 1 else ''), 'cp437')
+
+                if args.debug:
+                    printStr ("Altered and Purged Auth Header Data:\n" + ("!"*60) +"\n" + str(data, encoding='utf-8') + "\n" + "!"*60)
             except:
                 try:
                     conn_src.close()
