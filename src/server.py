@@ -134,7 +134,7 @@ def conn_string (conn_src, addr_src):
         # determine if this is an HTTPS request with this type of header:
         # CONNECT blah.blah.com:5543 HTTP/1.1
         #...
-        if fl_cmd[0] == 'Connect':
+        if fl_cmd[0] == 'CONNECT':
             http_connect_relay = True
             connect_addrs = fl_cmd[1]
             cnnt_parts    = connect_addrs.split(':')
