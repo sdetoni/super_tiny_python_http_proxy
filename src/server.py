@@ -17,10 +17,14 @@ parser.add_argument('--buffer_size',              help="Socket read buffer size"
 parser.add_argument('--debug',                    help="turn on debug information",         action="store_true")
 parser.add_argument('--proxy_authorization_file', help="Proxy user BASIC authorization file in format of username:password per line",
                                                                                             default="",                          type=str)
+parser.add_argument('--proxy_auth_network_file',  help="Proxy network remote connection restrictions file in format of:\nallow|<regular expression on ip address>;<regular expression on ip address>;....\ndeny|<regular expression on ip address>;<regular expression on ip address>;....",
+                                                                                            default="", type=str)
 
-args           = parser.parse_args()
-terminateAll   = False
-proxyAuthList  = []
+args                  = parser.parse_args()
+terminateAll          = False
+proxyAuthList         = []
+proxyAuthNetAllowList = []
+proxyAuthNetDenyList  = []
 
 # --------------------------------------------------------------------------------------
 
@@ -52,6 +56,34 @@ def start():    #Main Program
                 proxyAuthList.append(line)
     except:
         printStr(f"Error reading authorization file '{args.proxy_authorization_file}' @ line {authCfgLineNo+1}", prefix="ERROR")
+        printStr("Continuing to boot the proxy server...")
+
+    authCfgLineNo = 0
+    try:
+        if args.proxy_auth_network_file != "":
+            f = open(args.proxy_auth_network_file, "r")
+            for line in f.readlines():
+                authCfgLineNo += 1
+                line = line.strip()
+                if (line == "" or line[0] == '#'):
+                    continue
+                # extract network regex, and parse
+                a = line.split('|', 1)
+                if len(a) < 2:
+                    printStr(f"Malformed entry in network authorization file '{args.proxy_auth_network_file}' @ line {authCfgLineNo+1}", prefix="ERROR")
+                    continue
+                nrList = []
+                for n in a[1].split(';'):
+                    if n.strip() != "":
+                        nrList.append(n)
+                if a[0].strip().lower() == 'deny' and len(nrList) > 0:
+                    for n in nrList:
+                        proxyAuthNetDenyList.append(n)
+                elif a[0].strip().lower() == 'allow' and len(nrList) > 0:
+                    for n in nrList:
+                        proxyAuthNetAllowList.append(n)
+    except:
+        printStr(f"Error reading network authorization file '{args.proxy_auth_network_file}' @ line {authCfgLineNo+1}", prefix="ERROR")
         printStr("Continuing to boot the proxy server...")
 
     try:
@@ -189,12 +221,27 @@ def conn_string (conn_src, addr_src):
         printStr (f"Exception: {str(err)}", prefix="ERROR")
         printStr (traceback.format_exc(),   prefix="ERROR")
 
+def allowIPAddress (ip):
+    for rule in proxyAuthNetDenyList:
+        if re.match(rule, ip):
+            return False
+
+    if len(proxyAuthNetAllowList) > 0:
+        for rule in proxyAuthNetAllowList:
+            if re.match(rule, ip):
+                return True
+        return False
+
+    return True
 def proxy_server (webserver, port, conn_src, addr_src, data, http_connect_relay):
     try:
         # printStr(data)
         conn_dest = None
         conn_dest = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         conn_dest.settimeout (args.connect_timout)
+        ip = socket.gethostbyname(webserver)
+        if not allowIPAddress(ip):
+            raise Exception(f"IP access is denied for : {ip}")
         conn_dest.connect((webserver, port))
     except Exception as err:
         try:
