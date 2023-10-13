@@ -10,6 +10,7 @@ from datetime import datetime
 
 parser = argparse.ArgumentParser()
 
+parser.add_argument('--connect_timout',           help="Set proxy connecting timeout",      default=1,                           type=int)
 parser.add_argument('--port',                     help="Set listening port",                default=8888,                        type=int)
 parser.add_argument('--max_conn',                 help="Maximum allowed connections",       default=50,                          type=int)
 parser.add_argument('--buffer_size',              help="Socket read buffer size",           default=8192,                        type=int)
@@ -193,6 +194,7 @@ def proxy_server (webserver, port, conn_src, addr_src, data, http_connect_relay)
         # printStr(data)
         conn_dest = None
         conn_dest = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        conn_dest.settimeout (args.connect_timout)
         conn_dest.connect((webserver, port))
     except Exception as err:
         try:
