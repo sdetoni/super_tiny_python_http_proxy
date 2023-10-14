@@ -250,7 +250,7 @@ def proxy_server (webserver, port, conn_src, addr_src, data, http_connect_relay)
         try:
             conn_src.close()
         except: pass
-        printStr(f"proxy_server(destination connect) Exception: {str(err)}", prefix="ERROR")
+        printStr(f"proxy_server(destination connect) Exception for host:{webserver} :  {str(err)}", prefix="ERROR")
         printStr(traceback.format_exc(), prefix="ERROR")
         return
 
@@ -265,7 +265,7 @@ def proxy_server (webserver, port, conn_src, addr_src, data, http_connect_relay)
 
         conn_dest.setblocking(0)
 
-        printStr(f"Starting transfer:: src socket:{str(conn_src.getsockname())}   dst socket:{str(conn_dest.getsockname())}")
+        printStr(f"Starting transfer:: src socket:{str(conn_src.getsockname())}  dst socket:{str(conn_dest.getsockname())} dest ip:{ip} host:{webserver}")
         conn_src_data = b""
         conb_dst_data = b""
         terminate = False
@@ -324,7 +324,7 @@ def proxy_server (webserver, port, conn_src, addr_src, data, http_connect_relay)
                     if bytes_written > 0:
                         conb_dst_data = conb_dst_data[bytes_written:]
 
-        printStr(f"Transfer Ended:: src socket:{str(conn_src.getsockname())}   dst socket:{str(conn_dest.getsockname())}")
+        printStr(f"Transfer Ended:: src socket:{str(conn_src.getsockname())}   dst socket:{str(conn_dest.getsockname())} dest ip:{ip} host:{webserver}")
         conn_src.close()
         conn_dest.close()
     except Exception as err:
